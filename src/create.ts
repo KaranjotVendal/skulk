@@ -1,3 +1,4 @@
+import { isTarget } from "./target.ts"
 import { isEventBuiltin, Limits, type Builtin, type Condition, type Watch } from "./watch.ts"
 
 interface Common {
@@ -25,7 +26,7 @@ const base = (input: Common) => ({
 })
 
 function validateCommon(input: Common) {
-  if (!/^ses_[A-Za-z0-9]+$/.test(input.sessionID)) throw new Error(`not a session ID: ${input.sessionID}`)
+  if (!isTarget(input.sessionID)) throw new Error(`not a session ID or hc:<terminal>: ${input.sessionID}`)
   if (!input.noDeliver && !input.instruction.trim()) throw new Error("say what to do on wake with --do")
   if (input.name !== undefined && !/^[\w.:-]{1,64}$/.test(input.name))
     throw new Error("--name may use letters, digits, . _ : - (max 64)")
@@ -116,8 +117,8 @@ export function whenWatch(
     if (!(condition.diskGB >= 0)) throw new Error("--disk must be a number of GB")
   }
   if (condition.type === "idle") {
-    if (condition.sessions.length === 0) throw new Error("name the sessions to wait for: skulk when idle ses_… [ses_…]")
-    for (const session of condition.sessions) if (!/^ses_[A-Za-z0-9]+$/.test(session)) throw new Error(`not a session ID: ${session}`)
+    if (condition.sessions.length === 0) throw new Error("name the sessions to wait for: skulk when idle ses_…|hc:<terminal>…")
+    for (const session of condition.sessions) if (!isTarget(session)) throw new Error(`not a session ID or hc:<terminal>: ${session}`)
   }
   if (condition.type === "done" && condition.watches.length === 0) throw new Error("name the watches to wait for: skulk when done <id|name>…")
   if (condition.type === "gh-run") {

@@ -33,6 +33,18 @@ skulk status                  # is the daemon running?
 
 The target session defaults to `$OPENCODE_SESSION_ID`, which OpenCode's shell tool sets to the calling session, so an agent that runs `skulk` wakes itself. Pass `--session` to wake another session (for example HOME).
 
+### Waking a Herdr terminal (Claude Code and other agents)
+
+A target can also be `hc:<terminal>`, a terminal in the [Herdr](https://herdr.dev) app: `t7`, a name, or `machine/t7`. The wake is pasted into it with `hc send` and submitted, so it reaches Claude Code, or any agent or program, running there. Outside OpenCode, the target defaults to `hc:$HC_TERMINAL_ID`, the terminal `skulk` was run from, so an agent in Herdr wakes itself:
+
+```sh
+skulk poll --every 2m --changes --do "main moved: run deploy/publish.sh." -- git ls-remote origin main
+skulk when idle hc:t1k --do "t1k is done. Review its branch."
+skulk in 30m --session hc:t1k --do "Check the deploy."
+```
+
+`skulk when idle` and slot holds read the terminal's `idle` or `working` status from `hc get`. A terminal that does not exist or has exited fails the wake for good. Unlike OpenCode, `hc send` cannot drop a repeated message ID, so a daemon killed between sending and recording a wake can deliver it twice.
+
 ## Conditions
 
 The compared value is the command's trimmed stdout. A single argument after `--` runs through `/bin/sh -c`; several arguments run as argv.
@@ -234,8 +246,10 @@ The skill lives in [`skills/skulk/SKILL.md`](skills/skulk/SKILL.md).
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENCODE_SESSION_ID` | *(set by OpenCode)* | Default target session when `--session` is omitted |
+| `HC_TERMINAL_ID` | *(set by Herdr)* | Default target `hc:<terminal>` when `--session` is omitted outside OpenCode |
 | `SKULK_HOME` | `~/.local/state/skulk` | State directory (`skulk.db`, `daemon.pid`, `daemon.log`, `logs/`) |
 | `SKULK_OPENCODE` | `opencode` | Path or name of the `opencode` CLI binary |
+| `SKULK_HC` | `hc` | Path or name of the Herdr `hc` CLI binary |
 | `SKULK_GH` | `gh` | Path or name of the GitHub CLI binary |
 | `SKULK_NPM` | `npm` | Path or name of the `npm` CLI binary |
 | `SKULK_CAPACITY_COMMAND` | `mac-sim-lease --status` | Command probed by `skulk when capacity` (JSON, see above) |

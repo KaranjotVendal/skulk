@@ -1,7 +1,5 @@
-import type { BuiltinDeps } from "./builtin.ts"
 import type { RunResult } from "./condition.ts"
 import type { Delivery, DeliveryResult } from "./engine.ts"
-import type { Store } from "./store.ts"
 import { env } from "./env.ts"
 import { Limits, type Watch } from "./watch.ts"
 
@@ -158,13 +156,6 @@ export const launchdLabel = () => env("LABEL") ?? "dev.kitlangton.skulk"
 
 export const runProbe = (argv: readonly string[], watch: Watch) =>
   runCommand(argv, { cwd: watch.cwd, path: watch.path, timeoutMs: watch.timeoutMs ?? 60_000 })
-
-export const builtinDeps = (store: Store): BuiltinDeps => ({
-  capacity: probeCapacity,
-  sessionState,
-  watchStatus: (ref) => store.find(ref)?.status,
-  exec: runProbe,
-})
 
 /**
  * A session is idle when its last idle time is at or after its last update: OpenCode stamps `time.idle`

@@ -10,11 +10,13 @@ import { daemonPID, nudge, runDaemon } from "./daemon.ts"
 import { env } from "./env.ts"
 import { fileLogger, logPath } from "./engine.ts"
 import { legacyStateDirectory, Store } from "./store.ts"
-import { allowExec, builtinDeps, capacityCommand, defaultPath, launchdLabel, probeCapacity, runWatch, sessionExists, watchID } from "./system.ts"
+import { callingHcTarget } from "./hc.ts"
+import { allowExec, capacityCommand, defaultPath, launchdLabel, probeCapacity, runWatch, watchID } from "./system.ts"
+import { builtinDeps, targetExists } from "./target.ts"
 import { clip, formatDuration, formatTime, parseDuration, parseTime, redact, relative } from "./text.ts"
 import { describeCondition, isEventBuiltin, isOpen, Limits, type Builtin, type Condition, type Watch } from "./watch.ts"
 
-const usage = `skulk: wake an OpenCode session at a time, or when an external event or polled condition holds.
+const usage = `skulk: wake an OpenCode session or a Herdr terminal at a time, or when an external event or polled condition holds.
 (\`wake\` is an alias for \`skulk\`.)
 
 Timers
@@ -36,8 +38,8 @@ Built-in conditions (evaluated by the daemon; no probe script to write)
   skulk when capacity --do <instruction> [--slot heavy] [--cpu 70] [--builds 1] [--disk 20] [--stable 3m]
       the Mac has room: 3-minute CPU mean ≤ --cpu %, at most --builds xcodebuilds, ≥ --disk GB free,
       holding steadily for --stable. Read from \`${capacityCommand()}\` (set $SKULK_CAPACITY_COMMAND).
-  skulk when idle <ses_…>... --do <instruction> [--stable 2m]
-      every listed OpenCode session has finished its run and stayed idle for --stable
+  skulk when idle <ses_…|hc:<terminal>>... --do <instruction> [--stable 2m]
+      every listed OpenCode session or Herdr terminal has finished its run and stayed idle for --stable
   skulk when done <id|name>... --do <instruction>
       every listed watch has ended (fired, expired, failed or was cancelled)
   Built-in watches take --every (default 15s for gh-run/pr-checks/npm, 1m for capacity/idle/done),
@@ -84,7 +86,8 @@ Manage
   skulk daemon                     run the supervisor (launchd runs this)
   skulk launchd [--label L]        print the LaunchAgent plist (honours $SKULK_HOME)
 
-The target session defaults to $OPENCODE_SESSION_ID (the calling OpenCode session). Limits: polls at
+The target defaults to $OPENCODE_SESSION_ID (the calling OpenCode session), else to hc:$HC_TERMINAL_ID
+(the calling Herdr terminal, e.g. Claude Code there; the wake is pasted in with \`hc send\`). Limits: polls at
 most every 60s (15s default for event built-ins), ${Limits.maxActive} open watches, deadlines up to 14 days. State
 and logs live in ${"$"}SKULK_HOME (default ~/.local/state/skulk), owner-only. SKULK_* variables also accept
 their pre-rename WAKE_* names.`
@@ -178,11 +181,14 @@ function daemonWarning() {
 /** A foreground wait without --do resolves locally and never prompts a session. */
 const noDeliver = () => Boolean(flags.wait && !flags.do)
 
+/** The calling OpenCode session, else the calling Herdr terminal. */
+const callingTarget = () => process.env.OPENCODE_SESSION_ID ?? callingHcTarget()
+
 async function targetSession() {
-  const sessionID = flags.session ?? process.env.OPENCODE_SESSION_ID ?? (noDeliver() ? "ses_localwait" : undefined)
-  if (!sessionID) fail("no target session: pass --session ses_… (or run inside OpenCode, or pass --wait)")
+  const sessionID = flags.session ?? callingTarget() ?? (noDeliver() ? "ses_localwait" : undefined)
+  if (!sessionID) fail("no target session: pass --session ses_… or hc:<terminal> (or run inside OpenCode or Herdr, or pass --wait)")
   if (noDeliver()) return { sessionID, title: undefined }
-  const found = await sessionExists(sessionID).catch((error: Error) => fail(error.message))
+  const found = await targetExists(sessionID).catch((error: Error) => fail(error.message))
   if (!found.exists) fail(`session ${sessionID} does not exist`)
   return { sessionID, title: found.title }
 }
@@ -286,7 +292,7 @@ const commonInput = (sessionID: string, now = Date.now()) => ({
   sessionID,
   instruction: flags.do ?? "",
   now,
-  createdBy: process.env.OPENCODE_SESSION_ID,
+  createdBy: callingTarget(),
   noDeliver: noDeliver(),
 })
 
@@ -450,7 +456,7 @@ async function createWhen(kind: string | undefined, args: readonly string[]) {
   if (condition.type === "capacity") await readCapacity(watch)
   if (condition.type === "idle")
     for (const session of condition.sessions) {
-      const found = await sessionExists(session).catch((error: Error) => fail(error.message))
+      const found = await targetExists(session).catch((error: Error) => fail(error.message))
       if (!found.exists) fail(`session ${session} does not exist`)
     }
   if (isEventBuiltin(condition) && !flags["no-check"]) {
@@ -474,7 +480,7 @@ async function runWithSlot() {
   const slot = flags.slot ?? "heavy"
   const watch = parseOr(() =>
     whenWatch({
-      ...commonInput(flags.session ?? process.env.OPENCODE_SESSION_ID ?? "ses_localrun"),
+      ...commonInput(flags.session ?? callingTarget() ?? "ses_localrun"),
       instruction: "(skulk run)",
       noDeliver: true,
       condition: capacityCondition(),
@@ -516,7 +522,7 @@ async function runWithSlot() {
 }
 
 function release(ref: string | undefined) {
-  const session = process.env.OPENCODE_SESSION_ID
+  const session = callingTarget()
   const watch = ref ? store.find(ref) : undefined
   const holds = watch
     ? store.holds().filter((hold) => hold.watchID === watch.id)
